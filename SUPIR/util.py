@@ -151,6 +151,51 @@ def upscale_image(input_image, upscale, min_size=None, unit_resolution=64):
             h *= _upscale
     h = int(np.round(h / unit_resolution)) * unit_resolution
     w = int(np.round(w / unit_resolution)) * unit_resolution
+    
+    # Check if custom upscaler is specified
+    if hasattr(shared.opts, 'custom_upscaler') and shared.opts.custom_upscaler is not None and os.path.exists(shared.opts.custom_upscaler):
+        try:
+            # Try to import required packages for custom upscaling
+            from basicsr.archs.rrdbnet_arch import RRDBNet
+            from realesrgan import RealESRGANer
+            
+            # Initialize the custom upscaler model
+            model_path = shared.opts.custom_upscaler
+            printt(f"Using custom upscaler: {model_path}")
+            
+            # Determine model parameters based on file name
+            if '4x' in os.path.basename(model_path).lower():
+                scale = 4
+            else:
+                scale = 2  # Default scale
+                
+            # Create RealESRGAN model
+            model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=scale)
+            upsampler = RealESRGANer(
+                scale=scale,
+                model_path=model_path,
+                model=model,
+                tile=512,  # Use tile for large images
+                tile_pad=10,
+                pre_pad=0,
+                half=True  # Use half precision for faster processing
+            )
+            
+            # Convert input image to tensor and process
+            img_tensor = np.array(input_image)
+            output, _ = upsampler.enhance(img_tensor, outscale=upscale)
+            img = output.round().clip(0, 255).astype(np.uint8)
+            
+            # Resize to target dimensions if needed
+            if output.shape[0] != h or output.shape[1] != w:
+                img = cv2.resize(output, (w, h), interpolation=cv2.INTER_LANCZOS4)
+            
+            printt(f"Custom upscaler applied successfully")
+            return img
+        except Exception as e:
+            printt(f"Error using custom upscaler: {e}. Falling back to default upscaler.")
+    
+    # Default upscaler (Lanczos)
     img = cv2.resize(input_image, (w, h), interpolation=cv2.INTER_LANCZOS4 if upscale > 1 else cv2.INTER_AREA)
     img = img.round().clip(0, 255).astype(np.uint8)
     return img
