@@ -1631,27 +1631,178 @@ with (block):
                             upscaler_dir = os.path.join(os.path.dirname(__file__), 'models/upscalers')
                             if not os.path.exists(upscaler_dir):
                                 os.makedirs(upscaler_dir, exist_ok=True)
+                                
+                            # Function to install dependencies when checkbox is checked
+                            def install_upscaler_dependencies(checked):
+                                if checked:
+                                    try:
+                                        # Try to import required packages
+                                        try:
+                                            import basicsr
+                                            import realesrgan
+                                            printt("Upscaler dependencies already installed")
+                                        except ImportError:
+                                            printt("Installing required dependencies for custom upscaler...")
+                                            import subprocess
+                                            subprocess.run([sys.executable, "-m", "pip", "install", "basicsr", "realesrgan"], 
+                                                          check=True)
+                                            printt("Dependencies installed successfully")
+                                    except Exception as e:
+                                        printt(f"Error installing dependencies: {e}")
+                                return checked
+                                
+                            # Connect the checkbox to the dependency installation function
+                            custom_upscaler_checkbox.change(fn=install_upscaler_dependencies, 
+                                                          inputs=[custom_upscaler_checkbox],
+                                                          outputs=[custom_upscaler_checkbox])
                             
                             # List available upscaler models
                             def list_upscalers():
                                 upscaler_files = []
+                                # Check in the default directory
                                 if os.path.exists(upscaler_dir):
                                     for file in os.listdir(upscaler_dir):
                                         if file.endswith('.pth'):
                                             upscaler_files.append(file)
+                                            printt(f"Found upscaler in default directory: {file}")
+                                
+                                # Also check in the root models directory
+                                root_models_dir = os.path.join(os.path.dirname(__file__), 'models')
+                                if os.path.exists(root_models_dir):
+                                    for file in os.listdir(root_models_dir):
+                                        if file.endswith('.pth') and file not in upscaler_files:
+                                            upscaler_files.append(file)
+                                            printt(f"Found upscaler in root models directory: {file}")
+                                
+                                # Check one directory up as well
+                                parent_upscaler_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models/upscalers')
+                                if os.path.exists(parent_upscaler_dir):
+                                    for file in os.listdir(parent_upscaler_dir):
+                                        if file.endswith('.pth') and file not in upscaler_files:
+                                            upscaler_files.append(file)
+                                            printt(f"Found upscaler in parent directory: {file}")
+                                
+                                # Check workspace directory
+                                workspace_dir = "/workspace"
+                                if os.path.exists(workspace_dir):
+                                    for root, dirs, files in os.walk(workspace_dir, topdown=True, followlinks=False):
+                                        # Limit depth to avoid excessive searching
+                                        if root.count(os.sep) - workspace_dir.count(os.sep) > 3:
+                                            continue
+                                        for file in files:
+                                            if file.endswith('.pth') and file not in upscaler_files:
+                                                upscaler_files.append(file)
+                                                printt(f"Found upscaler in workspace: {os.path.join(root, file)}")
+                                                # Copy to standard location
+                                                try:
+                                                    src_path = os.path.join(root, file)
+                                                    dst_path = os.path.join(upscaler_dir, file)
+                                                    if not os.path.exists(dst_path):
+                                                        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                                                        shutil.copy2(src_path, dst_path)
+                                                        printt(f"Copied upscaler from {src_path} to {dst_path}")
+                                                except Exception as e:
+                                                    printt(f"Error copying upscaler: {e}")
+                                
+                                if not upscaler_files:
+                                    printt("No upscaler files found in standard locations")
+                                
                                 return ["None"] + upscaler_files
                             
                             # Add refresh button for upscalers
                             with gr.Row():
+                                # Initialize with empty choices, will be populated on page load
                                 custom_upscaler_dropdown = gr.Dropdown(label="Select Upscaler Model", 
-                                                                    choices=list_upscalers(),
+                                                                    choices=["None"],
                                                                     value="None")
                                 refresh_upscalers_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
                                                                    size="sm")
                                 
+                            # Force refresh on page load
+                            gr.on_load(lambda: refresh_upscalers_button.click())
+                                
                             # Function to refresh upscaler list
                             def refresh_upscalers():
-                                return gr.update(choices=list_upscalers())
+                                # Scan for upscaler files in various locations
+                                found_files = []
+                                search_paths = [
+                                    os.path.dirname(__file__),  # Current directory
+                                    os.path.dirname(os.path.dirname(__file__)),  # Parent directory
+                                    "/workspace"  # Root workspace directory for cloud environments
+                                ]
+                                
+                                # First, check if there are any files in the upscaler directory
+                                if os.path.exists(upscaler_dir):
+                                    printt(f"Checking upscaler directory: {upscaler_dir}")
+                                    for file in os.listdir(upscaler_dir):
+                                        if file.endswith('.pth'):
+                                            found_files.append(file)
+                                            printt(f"Found existing upscaler: {file}")
+                                
+                                # If no files found in upscaler directory, search other locations
+                                if not found_files:
+                                    for search_path in search_paths:
+                                        if os.path.exists(search_path):
+                                            printt(f"Searching for upscalers in: {search_path}")
+                                            for root, dirs, files in os.walk(search_path):
+                                                for file in files:
+                                                    if file.endswith('.pth'):
+                                                        # Copy the file to the upscalers directory if it's not already there
+                                                        src_path = os.path.join(root, file)
+                                                        dst_path = os.path.join(upscaler_dir, file)
+                                                        if not os.path.exists(dst_path) and src_path != dst_path:
+                                                            try:
+                                                                os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                                                                shutil.copy2(src_path, dst_path)
+                                                                printt(f"Copied upscaler from {src_path} to {dst_path}")
+                                                                found_files.append(file)
+                                                            except Exception as e:
+                                                                printt(f"Error copying upscaler: {e}")
+                                
+                                # If still no files found, try system-wide search
+                                if not found_files:
+                                    printt("No upscaler files found. Checking system-wide...")
+                                    try:
+                                        # Try to use find command
+                                        import subprocess
+                                        result = subprocess.run(["find", "/", "-name", "*.pth", "-type", "f", "-not", "-path", "*/\.*"], 
+                                                               capture_output=True, text=True, timeout=30)
+                                        if result.stdout:
+                                            printt("Found potential upscaler files:")
+                                            for line in result.stdout.splitlines()[:20]:  # Show first 20 results
+                                                printt(line)
+                                                file_name = os.path.basename(line)
+                                                try:
+                                                    dst_path = os.path.join(upscaler_dir, file_name)
+                                                    if not os.path.exists(dst_path):
+                                                        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                                                        shutil.copy2(line, dst_path)
+                                                        printt(f"Copied upscaler from {line} to {dst_path}")
+                                                        found_files.append(file_name)
+                                                except Exception as e:
+                                                    printt(f"Error copying upscaler: {e}")
+                                    except Exception as e:
+                                        printt(f"Error searching for upscalers: {e}")
+                                
+                                # Make sure the dependencies are installed
+                                try:
+                                    import importlib.util
+                                    if importlib.util.find_spec("basicsr") is None or importlib.util.find_spec("realesrgan") is None:
+                                        printt("Installing required dependencies for custom upscaler...")
+                                        subprocess.run(["pip", "install", "basicsr", "realesrgan"], check=True)
+                                        printt("Dependencies installed successfully.")
+                                except Exception as e:
+                                    printt(f"Error checking/installing dependencies: {e}")
+                                
+                                # Get the updated list of upscalers
+                                upscaler_files = ["None"]
+                                if os.path.exists(upscaler_dir):
+                                    for file in os.listdir(upscaler_dir):
+                                        if file.endswith('.pth'):
+                                            upscaler_files.append(file)
+                                
+                                printt(f"Available upscalers: {upscaler_files}")
+                                return gr.update(choices=upscaler_files)
                                 
                             refresh_upscalers_button.click(fn=refresh_upscalers, outputs=[custom_upscaler_dropdown],
                                                          show_progress=True, queue=True)
