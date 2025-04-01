@@ -76,6 +76,10 @@ parser.add_argument("--debug", action='store_true', default=False,
                     help="Enable debug mode, disables open_browser, and adds ui buttons for testing elements.")
 parser.add_argument("--dont_move_cpu", action='store_true', default=False,
                     help="Disables moving models to the CPU after completed. If you have sufficient VRAM enable this.")
+parser.add_argument("--fast_face_restore", action='store_true', default=False,
+                    help="Enable faster face restoration by batch processing faces and optimizing memory usage.")
+parser.add_argument("--custom_upscaler", type=str, default=None,
+                    help="Path to custom upscaler model (.pth file) to use instead of the default upscaler.")
 
 args = parser.parse_args()
 ui_helpers.ui_args = args
@@ -109,6 +113,8 @@ if torch.cuda.is_available() and args.autotune:
 
 shared.opts.half_mode = args.loading_half_params  
 shared.opts.fast_load_sd = args.fast_load_sd
+shared.opts.fast_face_restore = args.fast_face_restore
+shared.opts.custom_upscaler = args.custom_upscaler
 
 
 def apply_metadata(image_path):
@@ -153,6 +159,17 @@ if args.fp8:
 server_ip = args.ip
 if args.debug:
     args.open_browser = False
+
+# Add custom upscaler requirements check
+if args.custom_upscaler is not None:
+    try:
+        import basicsr
+        import realesrgan
+        printt(f"Custom upscaler dependencies found. Will use: {args.custom_upscaler}")
+    except ImportError:
+        printt("Warning: Custom upscaler requires basicsr and realesrgan packages.")
+        printt("Please install them with: pip install basicsr realesrgan")
+        args.custom_upscaler = None
 
 if args.ckpt_dir == "models/checkpoints":
     args.ckpt_dir = os.path.join(os.path.dirname(__file__), args.ckpt_dir)
@@ -891,8 +908,8 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                   s_stage1, s_stage2, s_cfg, seed, sampler, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
                   linear_cfg, linear_s_stage2, spt_linear_cfg, spt_linear_s_stage2, model_select,
                   ckpt_select, num_images, random_seed, apply_llava, face_resolution, apply_bg, apply_face,
-                  face_prompt, dont_update_progress=False, unload=True,
-                  progress=gr.Progress()):
+                  face_prompt, dont_update_progress=False, unload=True, use_custom_upscaler=False, custom_upscaler=None,
+                  fast_face_restore=False, progress=gr.Progress()):
     global model, status_container, event_id
     main_begin_time = time.time()
     total_images = len(inputs) * num_images
@@ -1090,7 +1107,8 @@ def batch_process(img_data,
                   diff_dtype, edm_steps, face_prompt, face_resolution, linear_CFG, linear_s_stage2,
                   make_comparison_video, model_select, n_prompt, num_images, num_samples, qs, random_seed,
                   s_cfg, s_churn, s_noise, s_stage1, s_stage2, sampler, save_captions, seed, spt_linear_CFG,
-                  spt_linear_s_stage2, temperature, top_p, upscale, auto_unload_llava, progress=gr.Progress()
+                  spt_linear_s_stage2, temperature, top_p, upscale, auto_unload_llava, use_custom_upscaler=False, 
+                  custom_upscaler=None, fast_face_restore=False, progress=gr.Progress()
                   ):
     global is_processing, llava_agent, model, status_container
     ckpt_select = get_ckpt_path(ckpt_select)
@@ -1605,6 +1623,44 @@ with (block):
                                                                value="Quality")
                         with gr.Column():
                             reset_button = gr.Button(value="Reset Param", scale=2)
+                    
+                    with gr.Row():
+                        with gr.Column():
+                            # Add custom upscaler selection
+                            custom_upscaler_checkbox = gr.Checkbox(label="Use Custom Upscaler", value=False)
+                            upscaler_dir = os.path.join(os.path.dirname(__file__), 'models/upscalers')
+                            if not os.path.exists(upscaler_dir):
+                                os.makedirs(upscaler_dir, exist_ok=True)
+                            
+                            # List available upscaler models
+                            def list_upscalers():
+                                upscaler_files = []
+                                if os.path.exists(upscaler_dir):
+                                    for file in os.listdir(upscaler_dir):
+                                        if file.endswith('.pth'):
+                                            upscaler_files.append(file)
+                                return ["None"] + upscaler_files
+                            
+                            # Add refresh button for upscalers
+                            with gr.Row():
+                                custom_upscaler_dropdown = gr.Dropdown(label="Select Upscaler Model", 
+                                                                    choices=list_upscalers(),
+                                                                    value="None")
+                                refresh_upscalers_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
+                                                                   size="sm")
+                                
+                            # Function to refresh upscaler list
+                            def refresh_upscalers():
+                                return gr.update(choices=list_upscalers())
+                                
+                            refresh_upscalers_button.click(fn=refresh_upscalers, outputs=[custom_upscaler_dropdown],
+                                                         show_progress=True, queue=True)
+                        
+                        with gr.Column():
+                            # Add fast face restore option
+                            fast_face_restore_checkbox = gr.Checkbox(label="Fast Face Restoration", 
+                                                                   value=False, 
+                                                                   info="Batch process faces for faster restoration")
                     with gr.Row():
                         with gr.Column():
                             linear_cfg_checkbox = gr.Checkbox(label="Linear CFG", value=True)

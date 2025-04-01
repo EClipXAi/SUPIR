@@ -44,6 +44,6 @@ torchvision
 torchaudio
 huggingface_hub
 xformers==0.0.28.post3
-
-
+basicsr>=1.4.2
+realesrgan>=0.3.0
 
